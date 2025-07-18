@@ -5,13 +5,16 @@
 
 #include "auto_click_layer.h"
 
-// グローバル変数の定義
-enum ball_state state = NONE;       // 現在の状態
-uint16_t click_timer = 0;           // タイマー
+// グローバル変数の実体定義
+enum ball_state state = NONE;
+uint16_t click_timer = 0;
 int16_t mouse_movement = 0;         // マウスの動き量
-bool rgb_was_enabled = false;       // RGB有効状態の保存
-uint8_t saved_mode = 0;             // 保存されたRGBモード
-HSV saved_hsv = {0, 0, 0};          // 保存されたHSV値
+
+// ローカル変数
+static bool rgb_was_enabled = false;       // RGB有効状態の保存
+static uint8_t saved_mode = 0;             // 保存されたRGBモード
+static HSV saved_hsv = {0, 0, 0};          // 保存されたHSV値
+static bool mouse_moved_recently = false; // 直前のマウス動作を記録するフラグ
 
 // 初期化関数
 void auto_click_layer_init(void) {
@@ -52,13 +55,11 @@ void enable_click_layer(void) {
 
 // クリックレイヤーを無効にする
 void disable_click_layer(void) {
-    state = NONE;
     layer_off(CLICK_LAYER);
-    mouse_movement = 0; // マウスの動き量をリセット
+    state = NONE;
     
-    // LEDを元の状態に戻す
+    // RGB LEDを元の状態に戻す
     #ifdef RGBLIGHT_ENABLE
-    // 保存していた状態に戻す
     if (rgb_was_enabled) {
         rgblight_enable_noeeprom();
         rgblight_mode_noeeprom(saved_mode);
@@ -69,33 +70,41 @@ void disable_click_layer(void) {
     #endif
 }
 
+// Keyballの動きをマウスに変換する関数
+void keyball_on_mouse_move(keyball_motion_t *m, report_mouse_t *r, bool is_left) {
+    // トラックボールの動きを検出したら、動き量を記録
+    if (m->x != 0 || m->y != 0) {
+        // マウスが動いたことを記録
+        mouse_moved_recently = true;
+        
+        // 状態がNONEの場合はクリックレイヤーの状態遷移を開始
+        if (state == NONE) {
+            state = WAITING;
+            click_timer = timer_read();
+            mouse_movement = my_abs(m->x) + my_abs(m->y);
+        } else if (state == WAITING) {
+            // 動き量を累積
+            mouse_movement += my_abs(m->x) + my_abs(m->y);
+            // 一定以上の動きを検知したらクリックレイヤーを有効化
+            if (mouse_movement >= MOVEMENT_THRESHOLD) {
+                enable_click_layer();
+            }
+        } else if (state == CLICKABLE || state == CLICKED) {
+            // クリック可能状態またはクリック直後状態ではタイマーをリセットし、クリック可能状態にする
+            state = CLICKABLE;
+            click_timer = timer_read();
+        }
+    }
+    
+    return;
+}
+
 // ポインティングデバイスのタスクフック
 report_mouse_t pointing_device_task_user(report_mouse_t mouse_report) {
-    // マウスが動いているかどうかチェック
+    // マウスが動いている場合
     if (mouse_report.x != 0 || mouse_report.y != 0) {
-        // マウスが動いたときのアクションを各状態ごとに制御する
-        switch (state) {
-            case WAITING:
-                mouse_movement += my_abs(mouse_report.x) + my_abs(mouse_report.y);
-                if (mouse_movement >= MOVEMENT_THRESHOLD) {
-                    mouse_movement = 0;
-                    enable_click_layer();
-                }
-                break;
-                
-            case CLICKABLE:
-                click_timer = timer_read();
-                break;
-                
-            case CLICKING: case CLICKED:
-                // 何もしない
-                break;
-                
-            default:
-                click_timer = timer_read();
-                state = WAITING;
-                mouse_movement = my_abs(mouse_report.x) + my_abs(mouse_report.y);
-        }
+        // マウスが動いたことを記録
+        mouse_moved_recently = true;
     } else {
         // マウスが動いていないとき
         switch (state) {
@@ -117,15 +126,19 @@ report_mouse_t pointing_device_task_user(report_mouse_t mouse_report) {
                 break;
                 
             case CLICKED:
-                if (timer_elapsed(click_timer) > CLICKED_TIMEOUT) {
-                    disable_click_layer();
-                }
+                // CLICKED状態からCLICKABLE状態に変更し、タイマーをリセット
+                // これにより、マウス操作中にレイヤーが無効化されることを防止
+                state = CLICKABLE;
+                click_timer = timer_read();
                 break;
                 
             default:
                 mouse_movement = 0;
                 state = NONE;
         }
+        
+        // マウス動作フラグをリセット
+        mouse_moved_recently = false;
     }
     
     return mouse_report;
@@ -136,59 +149,27 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
     // クリックレイヤーがアクティブな場合の処理
     if (state == CLICKABLE || state == CLICKING || state == CLICKED) {
         if (record->event.pressed) {
-            // キーが透過キー（KC_TRNS または _______）でない場合
-            if (keycode != KC_TRNS) {
-                state = CLICKING;
-                click_timer = timer_read();
-            } else {
-                // 透過キーが押された場合、クリックレイヤーを無効化
+            // クリックレイヤー上のキーマップを取得
+            uint16_t click_layer_keycode = keymap_key_to_keycode(CLICK_LAYER, record->event.key);
+            
+            // クリックレイヤー上で透過キーが設定されている場合
+            if (click_layer_keycode == KC_TRNS) {
+                // 透過キーの場合はクリックレイヤーを無効化
                 disable_click_layer();
+                return true;
             }
-        } else if (!record->event.pressed && state == CLICKING) {
-            // キーが離された場合、クリック直後状態に遷移
-            state = CLICKED;
-            click_timer = timer_read();
+            
+            // クリック状態に移行
+            state = CLICKING;
+        } else {
+            // キーが離された場合
+            if (state == CLICKING) {
+                // クリック直後状態に移行
+                state = CLICKED;
+                click_timer = timer_read();
+            }
         }
     }
     
-    return true; // 通常のキー処理を続行
-}
-
-// Keyballの動きをマウスに変換する関数
-void keyball_on_mouse_move(keyball_motion_t *m, report_mouse_t *r, bool is_left) {
-    // トラックボールの動きを検出したら、動き量を記録
-    if (m->x != 0 || m->y != 0) {
-        // 状態がNONEの場合はクリックレイヤーの状態遷移を開始
-        if (state == NONE) {
-            state = WAITING;
-            click_timer = timer_read();
-            mouse_movement = my_abs(m->x) + my_abs(m->y);
-        } else if (state == WAITING) {
-            // 動き量を累積
-            mouse_movement += my_abs(m->x) + my_abs(m->y);
-            // 一定以上の動きを検知したらクリックレイヤーを有効化
-            if (mouse_movement >= MOVEMENT_THRESHOLD) {
-                enable_click_layer();
-            }
-        } else if (state == CLICKABLE) {
-            // クリック可能状態ではタイマーをリセット
-            click_timer = timer_read();
-        }
-    }
-    
-    // 通常の動作を続行（トラックボールの動きをマウス移動に変換）
-    int8_t x = m->x;
-    int8_t y = m->y;
-    if (x > 127) x = 127;
-    else if (x < -128) x = -128;
-    if (y > 127) y = 127;
-    else if (y < -128) y = -128;
-    
-    if (is_left) {
-        r->x = -x;
-        r->y = y;
-    } else {
-        r->x = x;
-        r->y = y;
-    }
+    return true;
 }
