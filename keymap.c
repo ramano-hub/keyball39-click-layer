@@ -33,16 +33,16 @@ enum layer_number {
 #define KC_C_BS LCTL_T(KC_BSPC)      // ホールドで左CTRL、タップでバックスペース
 
 const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
-  // QWERTY
+  // QWERTY - 画像のキーマップに合わせて変更
   [_QWERTY] = LAYOUT_keyball39(
   //,-----------------------------------------------------.                    ,-----------------------------------------------------.      
-       KC_TAB,    KC_Q,    KC_W,    KC_E,    KC_R,    KC_T,                         KC_Y,    KC_U,    KC_I,    KC_O,    KC_P, KC_MINS,
+         KC_Q,    KC_L,    KC_U,    KC_Y,    KC_B,                                 KC_F,    KC_W,    KC_R,    KC_V,    KC_P,
   //|--------+--------+--------+--------+--------+--------|                    |--------+--------+--------+--------+--------+--------|      
-      KC_LCTL,    KC_A,    KC_S,    KC_D,    KC_F,    KC_G,                         KC_H,    KC_J,    KC_K,    KC_L, KC_SCLN, KC_QUOT,
+         KC_E, LALT_T(KC_I),LCTL_T(KC_A),LSFT_T(KC_O),    KC_G,                    KC_K, RSFT_T(KC_T),RCTL_T(KC_N),RALT_T(KC_S),    KC_H,
   //|--------+--------+--------+--------+--------+--------|                    |--------+--------+--------+--------+--------+--------|      
-      KC_LSFT,    KC_Z,    KC_X,    KC_C,    KC_V,    KC_B,                         KC_N,    KC_M, KC_COMM,  KC_DOT, KC_SLSH, KC_RSFT,
+         KC_Z,    KC_X,    KC_C,    KC_V,    KC_J,                                 KC_G,    KC_D,    KC_M,    KC_J,    KC_B,
   //|--------+--------+--------+--------+--------+--------'                    `--------+--------+--------+--------+--------+--------|      
-                         KC_G_JA, KC_C_BS, KC_L_SPC,                               KC_R_ENT,  KC_DEL, KC_G_EN 
+                      KC_A, KC_LANG2, LT(2,KC_BSPC),                               KC_SPC, LT(1,KC_TAB), KC_SLASH 
   //                  `---------------------------'                                  `---------------------------'
   ),
 
